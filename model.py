@@ -23,7 +23,7 @@ except ImportError:  # Allows local architecture tests before requirements are i
 
 
 # After training, paste your Google Drive file id here, or set the env var.
-CHECKPOINT_GDRIVE_ID = os.environ.get("DA6401_A3_CHECKPOINT_ID", "")
+CHECKPOINT_GDRIVE_ID = os.environ.get("DA6401_A3_CHECKPOINT_ID", "https://drive.google.com/file/d/1Uo31AvMjCPdRpZq8M39akwfeqJXbcup7/view?usp=drive_link")
 DEFAULT_CHECKPOINT_PATH = os.environ.get("DA6401_A3_CHECKPOINT_PATH", "transformer_checkpoint.pt")
 
 
