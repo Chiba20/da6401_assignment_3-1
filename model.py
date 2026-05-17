@@ -63,8 +63,44 @@ def _state_dict_from_checkpoint(checkpoint):
     if isinstance(checkpoint, dict):
         for key in ("model_state_dict", "state_dict", "model"):
             if key in checkpoint and isinstance(checkpoint[key], dict):
-                return checkpoint[key]
-    return checkpoint
+                return _normalize_state_dict(checkpoint[key])
+    return _normalize_state_dict(checkpoint)
+
+
+def _normalize_state_dict(state_dict):
+    if not isinstance(state_dict, dict):
+        return state_dict
+    if any(key.startswith("module.") for key in state_dict):
+        return {
+            key.removeprefix("module."): value
+            for key, value in state_dict.items()
+        }
+    return state_dict
+
+
+def _config_from_checkpoint(checkpoint) -> dict:
+    if not isinstance(checkpoint, dict):
+        return {}
+    config = checkpoint.get("model_config", {})
+    if not isinstance(config, dict):
+        config = {}
+
+    config = dict(config)
+    src_stoi = checkpoint.get("src_stoi") or checkpoint.get("src_vocab_stoi")
+    tgt_stoi = checkpoint.get("tgt_stoi") or checkpoint.get("tgt_vocab_stoi")
+    state_dict = _state_dict_from_checkpoint(checkpoint)
+
+    if src_stoi:
+        config["src_vocab_size"] = len(src_stoi)
+    elif isinstance(state_dict, dict) and "src_embed.weight" in state_dict:
+        config["src_vocab_size"] = state_dict["src_embed.weight"].shape[0]
+
+    if tgt_stoi:
+        config["tgt_vocab_size"] = len(tgt_stoi)
+    elif isinstance(state_dict, dict) and "tgt_embed.weight" in state_dict:
+        config["tgt_vocab_size"] = state_dict["tgt_embed.weight"].shape[0]
+
+    return config
 
 
 def scaled_dot_product_attention(
@@ -265,6 +301,39 @@ class Transformer(nn.Module):
 
         super().__init__()
 
+        loaded_checkpoint = None
+
+        if checkpoint_path and (
+            not os.path.exists(checkpoint_path)
+        ) and checkpoint_gdrive_id:
+
+            self._download_checkpoint_if_needed(
+                checkpoint_path,
+                checkpoint_gdrive_id
+            )
+
+        if checkpoint_path and os.path.exists(checkpoint_path):
+
+            loaded_checkpoint = torch.load(
+                checkpoint_path,
+                map_location="cpu"
+            )
+
+            checkpoint_config = _config_from_checkpoint(loaded_checkpoint)
+
+            src_vocab_size = checkpoint_config.get("src_vocab_size", src_vocab_size)
+            tgt_vocab_size = checkpoint_config.get("tgt_vocab_size", tgt_vocab_size)
+            d_model = checkpoint_config.get("d_model", d_model)
+            N = checkpoint_config.get("N", N)
+            num_heads = checkpoint_config.get("num_heads", num_heads)
+            d_ff = checkpoint_config.get("d_ff", d_ff)
+            dropout = checkpoint_config.get("dropout", dropout)
+            max_len = checkpoint_config.get("max_len", max_len)
+            pad_idx = checkpoint_config.get("pad_idx", pad_idx)
+            sos_idx = checkpoint_config.get("sos_idx", sos_idx)
+            eos_idx = checkpoint_config.get("eos_idx", eos_idx)
+            max_decode_len = checkpoint_config.get("max_decode_len", max_decode_len)
+
         self.src_vocab_size = src_vocab_size
         self.tgt_vocab_size = tgt_vocab_size
         self.d_model = d_model
@@ -334,30 +403,12 @@ class Transformer(nn.Module):
         # initialize weights
         self._reset_parameters()
 
-        # download checkpoint if needed
-        if checkpoint_path and (
-            not os.path.exists(checkpoint_path)
-        ) and checkpoint_gdrive_id:
+        if loaded_checkpoint is not None:
 
-            self._download_checkpoint_if_needed(
-                checkpoint_path,
-                checkpoint_gdrive_id
-            )
+            self._load_artifacts(loaded_checkpoint)
 
-        # load checkpoint
-        if checkpoint_path and os.path.exists(checkpoint_path):
-
-            loaded = torch.load(
-                checkpoint_path,
-                map_location="cpu"
-            )
-
-            # load vocab
-            self._load_artifacts(loaded)
-
-            # load weights
             self.load_state_dict(
-                _state_dict_from_checkpoint(loaded),
+                _state_dict_from_checkpoint(loaded_checkpoint),
                 strict=False
             )
 
@@ -391,8 +442,8 @@ class Transformer(nn.Module):
         if not isinstance(checkpoint, dict):
             return
 
-        src_stoi = checkpoint.get("src_stoi")
-        tgt_stoi = checkpoint.get("tgt_stoi")
+        src_stoi = checkpoint.get("src_stoi") or checkpoint.get("src_vocab_stoi")
+        tgt_stoi = checkpoint.get("tgt_stoi") or checkpoint.get("tgt_vocab_stoi")
 
         if src_stoi:
             self.src_vocab = SimpleVocab(src_stoi)
@@ -575,11 +626,23 @@ class Transformer(nn.Module):
     @staticmethod
     def _detokenize(tokens):
 
-        text = " ".join(tokens)
+        text = " ".join(tok for tok in tokens if tok != "<unk>")
 
         text = re.sub(
             r"\s+([.,!?;:%)\]}])",
             r"\1",
+            text
+        )
+
+        text = re.sub(
+            r"([({\[])\s+",
+            r"\1",
+            text
+        )
+
+        text = re.sub(
+            r"\s+'",
+            "'",
             text
         )
 
