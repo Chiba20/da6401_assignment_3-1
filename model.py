@@ -59,12 +59,53 @@ def _tokenize_text(text: str) -> list[str]:
     return re.findall(r"\w+|[^\w\s]", text.lower(), flags=re.UNICODE)
 
 
+def _google_drive_file_id(value: str) -> str:
+    match = re.search(r"/d/([^/]+)", value) or re.search(r"[?&]id=([^&]+)", value)
+    return match.group(1) if match else value
+
+
 def _state_dict_from_checkpoint(checkpoint):
     if isinstance(checkpoint, dict):
         for key in ("model_state_dict", "state_dict", "model"):
             if key in checkpoint and isinstance(checkpoint[key], dict):
-                return checkpoint[key]
-    return checkpoint
+                return _normalize_state_dict(checkpoint[key])
+    return _normalize_state_dict(checkpoint)
+
+
+def _normalize_state_dict(state_dict):
+    if not isinstance(state_dict, dict):
+        return state_dict
+    if any(key.startswith("module.") for key in state_dict):
+        return {
+            key.removeprefix("module."): value
+            for key, value in state_dict.items()
+        }
+    return state_dict
+
+
+def _config_from_checkpoint(checkpoint) -> dict:
+    if not isinstance(checkpoint, dict):
+        return {}
+    config = checkpoint.get("model_config", {})
+    if not isinstance(config, dict):
+        config = {}
+
+    config = dict(config)
+    src_stoi = checkpoint.get("src_stoi") or checkpoint.get("src_vocab_stoi")
+    tgt_stoi = checkpoint.get("tgt_stoi") or checkpoint.get("tgt_vocab_stoi")
+    state_dict = _state_dict_from_checkpoint(checkpoint)
+
+    if src_stoi:
+        config["src_vocab_size"] = len(src_stoi)
+    elif isinstance(state_dict, dict) and "src_embed.weight" in state_dict:
+        config["src_vocab_size"] = state_dict["src_embed.weight"].shape[0]
+
+    if tgt_stoi:
+        config["tgt_vocab_size"] = len(tgt_stoi)
+    elif isinstance(state_dict, dict) and "tgt_embed.weight" in state_dict:
+        config["tgt_vocab_size"] = state_dict["tgt_embed.weight"].shape[0]
+
+    return config
 
 
 def scaled_dot_product_attention(
@@ -228,6 +269,7 @@ class Decoder(nn.Module):
 
 
 class Transformer(nn.Module):
+
     def __init__(
         self,
         src_vocab_size: int = 10000,
@@ -245,20 +287,41 @@ class Transformer(nn.Module):
         eos_idx: int = 3,
         max_decode_len: int = 60,
     ) -> None:
+
         super().__init__()
+
         loaded_checkpoint = None
-        if checkpoint_path and (os.path.exists(checkpoint_path) or checkpoint_gdrive_id):
-            checkpoint_path = self._download_checkpoint_if_needed(checkpoint_path, checkpoint_gdrive_id)
-            loaded_checkpoint = torch.load(checkpoint_path, map_location="cpu")
-            cfg = loaded_checkpoint.get("model_config", {}) if isinstance(loaded_checkpoint, dict) else {}
-            src_vocab_size = cfg.get("src_vocab_size", src_vocab_size)
-            tgt_vocab_size = cfg.get("tgt_vocab_size", tgt_vocab_size)
-            d_model = cfg.get("d_model", d_model)
-            N = cfg.get("N", N)
-            num_heads = cfg.get("num_heads", num_heads)
-            d_ff = cfg.get("d_ff", d_ff)
-            dropout = cfg.get("dropout", dropout)
-            max_len = cfg.get("max_len", max_len)
+
+        if checkpoint_path and (
+            not os.path.exists(checkpoint_path)
+        ) and checkpoint_gdrive_id:
+
+            self._download_checkpoint_if_needed(
+                checkpoint_path,
+                checkpoint_gdrive_id
+            )
+
+        if checkpoint_path and os.path.exists(checkpoint_path):
+
+            loaded_checkpoint = torch.load(
+                checkpoint_path,
+                map_location="cpu"
+            )
+
+            checkpoint_config = _config_from_checkpoint(loaded_checkpoint)
+
+            src_vocab_size = checkpoint_config.get("src_vocab_size", src_vocab_size)
+            tgt_vocab_size = checkpoint_config.get("tgt_vocab_size", tgt_vocab_size)
+            d_model = checkpoint_config.get("d_model", d_model)
+            N = checkpoint_config.get("N", N)
+            num_heads = checkpoint_config.get("num_heads", num_heads)
+            d_ff = checkpoint_config.get("d_ff", d_ff)
+            dropout = checkpoint_config.get("dropout", dropout)
+            max_len = checkpoint_config.get("max_len", max_len)
+            pad_idx = checkpoint_config.get("pad_idx", pad_idx)
+            sos_idx = checkpoint_config.get("sos_idx", sos_idx)
+            eos_idx = checkpoint_config.get("eos_idx", eos_idx)
+            max_decode_len = checkpoint_config.get("max_decode_len", max_decode_len)
 
         self.src_vocab_size = src_vocab_size
         self.tgt_vocab_size = tgt_vocab_size
@@ -268,77 +331,199 @@ class Transformer(nn.Module):
         self.d_ff = d_ff
         self.dropout_p = dropout
         self.max_len = max_len
+
         self.pad_idx = pad_idx
         self.sos_idx = sos_idx
         self.eos_idx = eos_idx
         self.max_decode_len = max_decode_len
 
-        self.src_embed = nn.Embedding(src_vocab_size, d_model, padding_idx=pad_idx)
-        self.tgt_embed = nn.Embedding(tgt_vocab_size, d_model, padding_idx=pad_idx)
-        self.positional_encoding = PositionalEncoding(d_model, dropout, max_len)
-        self.encoder = Encoder(EncoderLayer(d_model, num_heads, d_ff, dropout), N)
-        self.decoder = Decoder(DecoderLayer(d_model, num_heads, d_ff, dropout), N)
-        self.generator = nn.Linear(d_model, tgt_vocab_size)
+        # embeddings
+        self.src_embed = nn.Embedding(
+            src_vocab_size,
+            d_model,
+            padding_idx=pad_idx
+        )
+
+        self.tgt_embed = nn.Embedding(
+            tgt_vocab_size,
+            d_model,
+            padding_idx=pad_idx
+        )
+
+        # positional encoding
+        self.positional_encoding = PositionalEncoding(
+            d_model,
+            dropout,
+            max_len
+        )
+
+        # encoder
+        self.encoder = Encoder(
+            EncoderLayer(
+                d_model,
+                num_heads,
+                d_ff,
+                dropout
+            ),
+            N
+        )
+
+        # decoder
+        self.decoder = Decoder(
+            DecoderLayer(
+                d_model,
+                num_heads,
+                d_ff,
+                dropout
+            ),
+            N
+        )
+
+        # output layer
+        self.generator = nn.Linear(
+            d_model,
+            tgt_vocab_size
+        )
+
+        # vocab
         self.src_vocab = SimpleVocab()
         self.tgt_vocab = SimpleVocab()
 
+        # initialize weights
         self._reset_parameters()
-        if checkpoint_path and os.path.exists(checkpoint_path):
-            loaded = loaded_checkpoint if loaded_checkpoint is not None else torch.load(checkpoint_path, map_location="cpu")
-            self._load_artifacts(loaded)
-            self.load_state_dict(_state_dict_from_checkpoint(loaded), strict=True)
 
-    def _reset_parameters(self) -> None:
+        if loaded_checkpoint is not None:
+
+            self._load_artifacts(loaded_checkpoint)
+
+            self.load_state_dict(
+                _state_dict_from_checkpoint(loaded_checkpoint),
+                strict=False
+            )
+
+    def _reset_parameters(self):
+
         for p in self.parameters():
+
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def _download_checkpoint_if_needed(self, checkpoint_path: str, drive_id: str) -> str:
-        if checkpoint_path and not os.path.exists(checkpoint_path) and drive_id:
-            if gdown is None:
-                raise ImportError("gdown is required to download the checkpoint. Install requirements.txt first.")
-            gdown.download(id=drive_id, output=checkpoint_path, quiet=False)
-        return checkpoint_path
+    def _download_checkpoint_if_needed(
+        self,
+        checkpoint_path,
+        drive_id
+    ):
 
-    def _load_artifacts(self, checkpoint) -> None:
+        if gdown is None:
+
+            raise ImportError(
+                "Install gdown first."
+            )
+
+        gdown.download(
+            id=_google_drive_file_id(drive_id),
+            output=checkpoint_path,
+            quiet=False
+        )
+
+    def _load_artifacts(self, checkpoint):
+
         if not isinstance(checkpoint, dict):
             return
+
         src_stoi = checkpoint.get("src_stoi") or checkpoint.get("src_vocab_stoi")
         tgt_stoi = checkpoint.get("tgt_stoi") or checkpoint.get("tgt_vocab_stoi")
+
         if src_stoi:
             self.src_vocab = SimpleVocab(src_stoi)
+
         if tgt_stoi:
             self.tgt_vocab = SimpleVocab(tgt_stoi)
 
-    def encode(self, src: torch.Tensor, src_mask: torch.Tensor) -> torch.Tensor:
+    def encode(
+        self,
+        src,
+        src_mask
+    ):
+
         x = self.src_embed(src) * math.sqrt(self.d_model)
-        return self.encoder(self.positional_encoding(x), src_mask)
+
+        x = self.positional_encoding(x)
+
+        return self.encoder(x, src_mask)
 
     def decode(
         self,
-        memory: torch.Tensor,
-        src_mask: torch.Tensor,
-        tgt: torch.Tensor,
-        tgt_mask: torch.Tensor,
-    ) -> torch.Tensor:
+        memory,
+        src_mask,
+        tgt,
+        tgt_mask
+    ):
+
         x = self.tgt_embed(tgt) * math.sqrt(self.d_model)
-        dec = self.decoder(self.positional_encoding(x), memory, src_mask, tgt_mask)
+
+        x = self.positional_encoding(x)
+
+        dec = self.decoder(
+            x,
+            memory,
+            src_mask,
+            tgt_mask
+        )
+
         return self.generator(dec)
 
     def forward(
         self,
-        src: torch.Tensor,
-        tgt: torch.Tensor,
-        src_mask: torch.Tensor,
-        tgt_mask: torch.Tensor,
-    ) -> torch.Tensor:
-        return self.decode(self.encode(src, src_mask), src_mask, tgt, tgt_mask)
+        src,
+        tgt,
+        src_mask=None,
+        tgt_mask=None
+    ):
 
-    def infer(self, src_sentence: str) -> str:
+        if src_mask is None:
+            src_mask = make_src_mask(
+                src,
+                self.pad_idx
+            )
+
+        if tgt_mask is None:
+            tgt_mask = make_tgt_mask(
+                tgt,
+                self.pad_idx
+            )
+
+        memory = self.encode(
+            src,
+            src_mask
+        )
+
+        return self.decode(
+            memory,
+            src_mask,
+            tgt,
+            tgt_mask
+        )
+
+    def infer(
+        self,
+        src_sentence
+    ):
+
         was_training = self.training
+
         self.eval()
+
         device = next(self.parameters()).device
-        tokens = ["<sos>"] + _tokenize_text(src_sentence) + ["<eos>"]
+
+        # tokenize
+        tokens = (
+            ["<sos>"]
+            + _tokenize_text(src_sentence)
+            + ["<eos>"]
+        )
+
+        # numericalize
         src_ids = self.src_vocab.lookup_indices(tokens)
         src = torch.tensor(src_ids, dtype=torch.long, device=device).unsqueeze(0)
         src_mask = make_src_mask(src, self.pad_idx)
@@ -370,9 +555,26 @@ class Transformer(nn.Module):
         return self._detokenize(out_tokens)
 
     @staticmethod
-    def _detokenize(tokens: list[str]) -> str:
+    def _detokenize(tokens):
+
         text = " ".join(tok for tok in tokens if tok != "<unk>")
-        text = re.sub(r"\s+([.,!?;:%)\]}])", r"\1", text)
-        text = re.sub(r"([({\[])\s+", r"\1", text)
-        text = re.sub(r"\s+'", "'", text)
+
+        text = re.sub(
+            r"\s+([.,!?;:%)\]}])",
+            r"\1",
+            text
+        )
+
+        text = re.sub(
+            r"([({\[])\s+",
+            r"\1",
+            text
+        )
+
+        text = re.sub(
+            r"\s+'",
+            "'",
+            text
+        )
+
         return text.strip()
