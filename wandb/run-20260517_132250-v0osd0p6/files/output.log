@@ -1,0 +1,11 @@
+README.md: 1.15kB [00:00, 404kB/s]
+C:\Users\HP\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\huggingface_hub\file_download.py:138: UserWarning: `huggingface_hub` cache-system uses symlinks by default to efficiently store duplicated files but your machine does not support them in C:\Users\HP\.cache\huggingface\hub\datasets--bentrevett--multi30k. Caching files will still work but in a degraded version that might require more space on your disk. This warning can be disabled by setting the `HF_HUB_DISABLE_SYMLINKS_WARNING` environment variable. For more details, see https://huggingface.co/docs/huggingface_hub/how-to-cache#limitations.
+To support symlinks on Windows, you either need to activate Developer Mode or to run Python as an administrator. In order to activate developer mode, see this article: https://docs.microsoft.com/en-us/windows/apps/get-started/enable-your-device-for-development
+  warnings.warn(message)
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+train.jsonl: 4.60MB [00:00, 35.3MB/s]
+val.jsonl: 164kB [00:00, 4.57MB/s]
+test.jsonl: 156kB [00:00, 23.6MB/s]
+Generating train split: 100%|█| 29000/29000 [00:00<00:00, 355226.31 e
+Generating validation split: 100%|█| 1014/1014 [00:00<00:00, 33191.23
+Generating test split: 100%|█| 1000/1000 [00:00<00:00, 45108.77 examp
