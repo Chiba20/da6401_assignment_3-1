@@ -164,9 +164,23 @@ class MultiHeadAttention(nn.Module):
         q = self._split_heads(self.w_q(query))
         k = self._split_heads(self.w_k(key))
         v = self._split_heads(self.w_v(value))
+
+        # scaled dot-product attention returns (output, weights)
         attn_out, attn_weights = scaled_dot_product_attention(q, k, v, mask)
-        if self.training:
-            attn_out = torch.matmul(self.dropout(attn_weights), v)
+
+        # store attention weights on the module for hooks / visualization
+        # shape: [batch, heads, seq, seq]
+        try:
+            # attn_weights currently has shape [batch, heads, seq, seq]
+            self.attention_weights = attn_weights
+        except Exception:
+            self.attention_weights = None
+
+        # compute attended values and apply dropout
+        attn_out = torch.matmul(attn_weights, v)
+        attn_out = self.dropout(attn_out)
+
+        # reorder back to [batch, seq, heads, d_k] -> [batch, seq, d_model]
         attn_out = attn_out.transpose(1, 2).contiguous()
         batch_size, seq_len, _, _ = attn_out.shape
         return self.w_o(attn_out.view(batch_size, seq_len, self.d_model))
@@ -282,6 +296,7 @@ class Transformer(nn.Module):
         checkpoint_path: str = DEFAULT_CHECKPOINT_PATH,
         checkpoint_gdrive_id: str = "1Uo31AvMjCPdRpZq8M39akwfeqJXbcup7",
         max_len: int = 5000,
+        use_learned_pos: bool = False,
         pad_idx: int = 1,
         sos_idx: int = 2,
         eos_idx: int = 3,
@@ -332,6 +347,8 @@ class Transformer(nn.Module):
         self.dropout_p = dropout
         self.max_len = max_len
 
+        self.use_learned_pos = use_learned_pos
+
         self.pad_idx = pad_idx
         self.sos_idx = sos_idx
         self.eos_idx = eos_idx
@@ -351,11 +368,15 @@ class Transformer(nn.Module):
         )
 
         # positional encoding
-        self.positional_encoding = PositionalEncoding(
-            d_model,
-            dropout,
-            max_len
-        )
+        if use_learned_pos:
+            self.learned_pos_embed = nn.Embedding(max_len, d_model)
+            self.positional_encoding = None
+        else:
+            self.positional_encoding = PositionalEncoding(
+                d_model,
+                dropout,
+                max_len
+            )
 
         # encoder
         self.encoder = Encoder(
@@ -448,7 +469,12 @@ class Transformer(nn.Module):
 
         x = self.src_embed(src) * math.sqrt(self.d_model)
 
-        x = self.positional_encoding(x)
+        if self.use_learned_pos and hasattr(self, "learned_pos_embed"):
+            seq_len = x.size(1)
+            pos_ids = torch.arange(seq_len, device=x.device).unsqueeze(0)
+            x = x + self.learned_pos_embed(pos_ids)
+        else:
+            x = self.positional_encoding(x)
 
         return self.encoder(x, src_mask)
 
@@ -462,7 +488,12 @@ class Transformer(nn.Module):
 
         x = self.tgt_embed(tgt) * math.sqrt(self.d_model)
 
-        x = self.positional_encoding(x)
+        if self.use_learned_pos and hasattr(self, "learned_pos_embed"):
+            seq_len = x.size(1)
+            pos_ids = torch.arange(seq_len, device=x.device).unsqueeze(0)
+            x = x + self.learned_pos_embed(pos_ids)
+        else:
+            x = self.positional_encoding(x)
 
         dec = self.decoder(
             x,

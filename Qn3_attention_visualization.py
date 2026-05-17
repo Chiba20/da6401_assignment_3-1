@@ -7,6 +7,10 @@ import math
 import torch
 import matplotlib.pyplot as plt
 import seaborn as sns
+try:
+    import wandb
+except Exception:
+    wandb = None
 
 from model import Transformer, make_src_mask
 from dataset import Multi30kDataset
@@ -149,6 +153,20 @@ for layer_idx, attn in enumerate(attention_maps):
         plt.close()
 
         print(f"saved: {filename}")
+        # log to wandb if available
+        if wandb is not None and wandb.run is None:
+            try:
+                wandb.init(project="da6401-a3", name="attention-visualization")
+            except Exception:
+                pass
+
+        if wandb is not None and wandb.run is not None:
+            try:
+                wandb.log({
+                    f"encoder/layer{layer_idx+1}/head{head+1}": wandb.Image(filename)
+                })
+            except Exception:
+                pass
 
 
 print("\nAttention visualization complete.")
