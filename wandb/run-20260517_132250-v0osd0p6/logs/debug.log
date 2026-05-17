@@ -1,0 +1,47 @@
+2026-05-17 13:22:50,730 INFO    MainThread:6156 [wandb_setup.py:_flush():81] Current SDK version is 0.25.0
+2026-05-17 13:22:50,731 INFO    MainThread:6156 [wandb_setup.py:_flush():81] Configure stats pid to 6156
+2026-05-17 13:22:50,731 INFO    MainThread:6156 [wandb_setup.py:_flush():81] Loading settings from environment variables
+2026-05-17 13:22:50,732 INFO    MainThread:6156 [wandb_init.py:setup_run_log_directory():717] Logging user logs to C:\Users\HP\Downloads\da6401_assignment_3\wandb\run-20260517_132250-v0osd0p6\logs\debug.log
+2026-05-17 13:22:50,733 INFO    MainThread:6156 [wandb_init.py:setup_run_log_directory():718] Logging internal logs to C:\Users\HP\Downloads\da6401_assignment_3\wandb\run-20260517_132250-v0osd0p6\logs\debug-internal.log
+2026-05-17 13:22:50,735 INFO    MainThread:6156 [wandb_init.py:init():844] calling init triggers
+2026-05-17 13:22:50,735 INFO    MainThread:6156 [wandb_init.py:init():849] wandb.init called with sweep_config: {}
+config: {'project': 'da6401-a3', 'run_name': None, 'batch_size': 64, 'num_epochs': 20, 'd_model': 256, 'N': 3, 'num_heads': 8, 'd_ff': 1024, 'dropout': 0.1, 'warmup_steps': 4000, 'lr': 1.0, 'min_freq': 2, 'checkpoint_path': 'transformer_checkpoint.pt', 'use_wandb': True, '_wandb': {}}
+2026-05-17 13:22:50,735 INFO    MainThread:6156 [wandb_init.py:init():892] starting backend
+2026-05-17 13:22:57,328 INFO    MainThread:6156 [wandb_init.py:init():895] sending inform_init request
+2026-05-17 13:22:57,494 INFO    MainThread:6156 [wandb_init.py:init():903] backend started and connected
+2026-05-17 13:22:57,546 INFO    MainThread:6156 [wandb_init.py:init():973] updated telemetry
+2026-05-17 13:22:57,636 INFO    MainThread:6156 [wandb_init.py:init():997] communicating run to backend with 90.0 second timeout
+2026-05-17 13:23:00,587 INFO    MainThread:6156 [wandb_init.py:init():1042] starting run threads in backend
+2026-05-17 13:23:00,909 INFO    MainThread:6156 [wandb_run.py:_console_start():2524] atexit reg
+2026-05-17 13:23:00,909 INFO    MainThread:6156 [wandb_run.py:_redirect():2373] redirect: wrap_raw
+2026-05-17 13:23:00,909 INFO    MainThread:6156 [wandb_run.py:_redirect():2442] Wrapping output streams.
+2026-05-17 13:23:00,909 INFO    MainThread:6156 [wandb_run.py:_redirect():2465] Redirects installed.
+2026-05-17 13:23:00,968 INFO    MainThread:6156 [wandb_init.py:init():1082] run started, returning control to user process
+2026-05-17 13:33:56,876 ERROR   wandb-AsyncioManager-main:6156 [service_client.py:_forward_responses():131] Error reading server response.
+Traceback (most recent call last):
+  File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3568.0_x64__qbz5n2kfra8p0\Lib\asyncio\windows_events.py", line 463, in finish_socket_func
+    return ov.getresult()
+           ~~~~~~~~~~~~^^
+OSError: [WinError 64] The specified network name is no longer available
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\HP\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\wandb\sdk\lib\service\service_client.py", line 127, in _forward_responses
+    while response := await self._read_server_response():
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\HP\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\wandb\sdk\lib\service\service_client.py", line 141, in _read_server_response
+    header = await self._reader.readexactly(_HEADER_BYTE_INT_LEN)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3568.0_x64__qbz5n2kfra8p0\Lib\asyncio\streams.py", line 769, in readexactly
+    await self._wait_for_data('readexactly')
+  File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3568.0_x64__qbz5n2kfra8p0\Lib\asyncio\streams.py", line 539, in _wait_for_data
+    await self._waiter
+  File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3568.0_x64__qbz5n2kfra8p0\Lib\asyncio\proactor_events.py", line 286, in _loop_reading
+    length = fut.result()
+  File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3568.0_x64__qbz5n2kfra8p0\Lib\asyncio\windows_events.py", line 804, in _poll
+    value = callback(transferred, key, ov)
+  File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3568.0_x64__qbz5n2kfra8p0\Lib\asyncio\windows_events.py", line 467, in finish_socket_func
+    raise ConnectionResetError(*exc.args)
+ConnectionResetError: [WinError 64] The specified network name is no longer available
+2026-05-17 13:33:56,923 INFO    wandb-AsyncioManager-main:6156 [mailbox.py:close():155] Closing mailbox, abandoning 1 handles.

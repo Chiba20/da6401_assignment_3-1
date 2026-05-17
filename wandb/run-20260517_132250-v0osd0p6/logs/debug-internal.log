@@ -1,0 +1,13 @@
+{"time":"2026-05-17T13:22:57.528585+05:30","level":"INFO","msg":"stream: starting","core version":"0.25.0"}
+{"time":"2026-05-17T13:22:58.9541582+05:30","level":"INFO","msg":"stream: created new stream","id":"v0osd0p6"}
+{"time":"2026-05-17T13:22:58.9559236+05:30","level":"INFO","msg":"handler: started","stream_id":"v0osd0p6"}
+{"time":"2026-05-17T13:22:58.9718944+05:30","level":"INFO","msg":"stream: started","id":"v0osd0p6"}
+{"time":"2026-05-17T13:22:58.9718944+05:30","level":"INFO","msg":"writer: started","stream_id":"v0osd0p6"}
+{"time":"2026-05-17T13:22:58.9718944+05:30","level":"INFO","msg":"sender: started","stream_id":"v0osd0p6"}
+{"time":"2026-05-17T13:29:25.620888+05:30","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/files/ge26z812-iitm-india/da6401-a3/v0osd0p6/file_stream\": read tcp 10.22.76.120:64120->34.8.250.101:443: wsarecv: A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond."}
+{"time":"2026-05-17T13:29:27.9677838+05:30","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/files/ge26z812-iitm-india/da6401-a3/v0osd0p6/file_stream\": dial tcp: lookup api.wandb.ai: no such host"}
+{"time":"2026-05-17T13:29:32.3998912+05:30","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/files/ge26z812-iitm-india/da6401-a3/v0osd0p6/file_stream\": dial tcp: lookup api.wandb.ai: no such host"}
+{"time":"2026-05-17T13:29:40.9075831+05:30","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/files/ge26z812-iitm-india/da6401-a3/v0osd0p6/file_stream\": dial tcp: lookup api.wandb.ai: no such host"}
+{"time":"2026-05-17T13:29:58.5511264+05:30","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/files/ge26z812-iitm-india/da6401-a3/v0osd0p6/file_stream\": dial tcp: lookup api.wandb.ai: no such host"}
+{"time":"2026-05-17T13:30:32.3362678+05:30","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/files/ge26z812-iitm-india/da6401-a3/v0osd0p6/file_stream\": dial tcp: lookup api.wandb.ai: no such host"}
+{"time":"2026-05-17T13:31:32.3469576+05:30","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/files/ge26z812-iitm-india/da6401-a3/v0osd0p6/file_stream\": dial tcp: lookup api.wandb.ai: no such host"}

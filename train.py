@@ -4,6 +4,7 @@ Training, decoding, BLEU evaluation, and checkpoints for Assignment 3.
 
 from collections import Counter
 import math
+import os
 from typing import Optional
 
 import torch
@@ -13,6 +14,11 @@ from torch.utils.data import DataLoader
 from dataset import Multi30kDataset, collate_batch
 from lr_scheduler import NoamScheduler
 from model import Transformer, make_src_mask, make_tgt_mask
+
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 
 class LabelSmoothingLoss(nn.Module):
@@ -202,6 +208,8 @@ def load_checkpoint(
 def run_training_experiment() -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     config = {
+        "project": "da6401-a3",
+        "run_name": None,
         "batch_size": 64,
         "num_epochs": 20,
         "d_model": 256,
@@ -212,7 +220,17 @@ def run_training_experiment() -> None:
         "warmup_steps": 4000,
         "lr": 1.0,
         "min_freq": 2,
+        "checkpoint_path": "transformer_checkpoint.pt",
+        "use_wandb": True,
     }
+
+    use_wandb = config["use_wandb"] and wandb is not None and os.environ.get("WANDB_MODE") != "disabled"
+    if use_wandb:
+        wandb.init(project=config["project"], name=config["run_name"], config=config)
+        wandb.define_metric("epoch")
+        wandb.define_metric("train/*", step_metric="epoch")
+        wandb.define_metric("val/*", step_metric="epoch")
+        wandb.define_metric("test/*")
 
     train_ds = Multi30kDataset("train", min_freq=config["min_freq"])
     val_ds = Multi30kDataset("validation", src_vocab=train_ds.src_vocab, tgt_vocab=train_ds.tgt_vocab)
@@ -243,12 +261,28 @@ def run_training_experiment() -> None:
         train_loss = run_epoch(train_loader, model, loss_fn, optimizer, scheduler, epoch, True, device)
         val_loss = run_epoch(val_loader, model, loss_fn, None, None, epoch, False, device)
         print(f"epoch={epoch + 1} train_loss={train_loss:.4f} val_loss={val_loss:.4f}")
+        if use_wandb:
+            wandb.log(
+                {
+                    "epoch": epoch + 1,
+                    "train/loss": train_loss,
+                    "val/loss": val_loss,
+                    "train/lr": optimizer.param_groups[0]["lr"],
+                }
+            )
         if val_loss < best_val:
             best_val = val_loss
-            save_checkpoint(model, optimizer, scheduler, epoch, "transformer_checkpoint.pt")
+            save_checkpoint(model, optimizer, scheduler, epoch, config["checkpoint_path"])
+            if use_wandb:
+                artifact = wandb.Artifact("best-transformer-checkpoint", type="model")
+                artifact.add_file(config["checkpoint_path"])
+                wandb.log_artifact(artifact)
 
     bleu = evaluate_bleu(model, test_loader, train_ds.tgt_vocab, device=device)
     print(f"test_bleu={bleu:.2f}")
+    if use_wandb:
+        wandb.log({"test/bleu": bleu, "best/val_loss": best_val})
+        wandb.finish()
 
 
 if __name__ == "__main__":

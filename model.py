@@ -23,7 +23,7 @@ except ImportError:  # Allows local architecture tests before requirements are i
 
 
 # After training, paste your Google Drive file id here, or set the env var.
-CHECKPOINT_GDRIVE_ID = os.environ.get("DA6401_A3_CHECKPOINT_ID", "")
+CHECKPOINT_GDRIVE_ID = os.environ.get("DA6401_A3_CHECKPOINT_ID", "1Uo31AvMjCPdRpZq8M39akwfeqJXbcup7")
 DEFAULT_CHECKPOINT_PATH = os.environ.get("DA6401_A3_CHECKPOINT_PATH", "transformer_checkpoint.pt")
 
 
@@ -124,7 +124,8 @@ class MultiHeadAttention(nn.Module):
         k = self._split_heads(self.w_k(key))
         v = self._split_heads(self.w_v(value))
         attn_out, attn_weights = scaled_dot_product_attention(q, k, v, mask)
-        attn_out = torch.matmul(self.dropout(attn_weights), v)
+        if self.training:
+            attn_out = torch.matmul(self.dropout(attn_weights), v)
         attn_out = attn_out.transpose(1, 2).contiguous()
         batch_size, seq_len, _, _ = attn_out.shape
         return self.w_o(attn_out.view(batch_size, seq_len, self.d_model))
@@ -231,24 +232,25 @@ class Transformer(nn.Module):
         self,
         src_vocab_size: int = 10000,
         tgt_vocab_size: int = 10000,
-        d_model: int = 512,
-        N: int = 6,
+        d_model: int = 256,
+        N: int = 3,
         num_heads: int = 8,
-        d_ff: int = 2048,
+        d_ff: int = 1024,
         dropout: float = 0.1,
         checkpoint_path: str = DEFAULT_CHECKPOINT_PATH,
-        checkpoint_gdrive_id: str = CHECKPOINT_GDRIVE_ID,
+        checkpoint_gdrive_id: str = "1Uo31AvMjCPdRpZq8M39akwfeqJXbcup7",
         max_len: int = 5000,
         pad_idx: int = 1,
         sos_idx: int = 2,
         eos_idx: int = 3,
-        max_decode_len: int = 100,
+        max_decode_len: int = 60,
     ) -> None:
         super().__init__()
+        loaded_checkpoint = None
         if checkpoint_path and (os.path.exists(checkpoint_path) or checkpoint_gdrive_id):
             checkpoint_path = self._download_checkpoint_if_needed(checkpoint_path, checkpoint_gdrive_id)
-            loaded = torch.load(checkpoint_path, map_location="cpu")
-            cfg = loaded.get("model_config", {}) if isinstance(loaded, dict) else {}
+            loaded_checkpoint = torch.load(checkpoint_path, map_location="cpu")
+            cfg = loaded_checkpoint.get("model_config", {}) if isinstance(loaded_checkpoint, dict) else {}
             src_vocab_size = cfg.get("src_vocab_size", src_vocab_size)
             tgt_vocab_size = cfg.get("tgt_vocab_size", tgt_vocab_size)
             d_model = cfg.get("d_model", d_model)
@@ -282,7 +284,7 @@ class Transformer(nn.Module):
 
         self._reset_parameters()
         if checkpoint_path and os.path.exists(checkpoint_path):
-            loaded = torch.load(checkpoint_path, map_location="cpu")
+            loaded = loaded_checkpoint if loaded_checkpoint is not None else torch.load(checkpoint_path, map_location="cpu")
             self._load_artifacts(loaded)
             self.load_state_dict(_state_dict_from_checkpoint(loaded), strict=True)
 
@@ -340,23 +342,31 @@ class Transformer(nn.Module):
         src_ids = self.src_vocab.lookup_indices(tokens)
         src = torch.tensor(src_ids, dtype=torch.long, device=device).unsqueeze(0)
         src_mask = make_src_mask(src, self.pad_idx)
-        ys = torch.tensor([[self.sos_idx]], dtype=torch.long, device=device)
-        with torch.no_grad():
-            memory = self.encode(src, src_mask)
-            for _ in range(self.max_decode_len - 1):
-                tgt_mask = make_tgt_mask(ys, self.pad_idx)
-                logits = self.decode(memory, src_mask, ys, tgt_mask)
-                next_word = int(torch.argmax(logits[:, -1, :], dim=-1).item())
-                ys = torch.cat([ys, torch.tensor([[next_word]], dtype=torch.long, device=device)], dim=1)
-                if next_word == self.eos_idx:
-                    break
+        src_content_len = max(len(src_ids) - 2, 1)
+        decode_limit = min(self.max_decode_len, max(8, min(60, 2 * src_content_len + 10)))
+        ys = torch.full((1, decode_limit), self.pad_idx, dtype=torch.long, device=device)
+        ys[0, 0] = self.sos_idx
+        end_pos = 1
+        try:
+            with torch.inference_mode():
+                memory = self.encode(src, src_mask)
+                for step in range(1, decode_limit):
+                    current = ys[:, :step]
+                    tgt_mask = make_tgt_mask(current, self.pad_idx)
+                    logits = self.decode(memory, src_mask, current, tgt_mask)
+                    next_word = int(torch.argmax(logits[0, -1], dim=-1).item())
+                    ys[0, step] = next_word
+                    end_pos = step + 1
+                    if next_word == self.eos_idx:
+                        break
+        finally:
+            if was_training:
+                self.train()
         out_tokens = [
             self.tgt_vocab.lookup_token(int(idx))
-            for idx in ys.squeeze(0).tolist()
+            for idx in ys[0, :end_pos].tolist()
             if int(idx) not in {self.sos_idx, self.eos_idx, self.pad_idx}
         ]
-        if was_training:
-            self.train()
         return self._detokenize(out_tokens)
 
     @staticmethod
