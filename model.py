@@ -23,7 +23,7 @@ except ImportError:  # Allows local architecture tests before requirements are i
 
 
 # After training, paste your Google Drive file id here, or set the env var.
-CHECKPOINT_GDRIVE_ID = os.environ.get("DA6401_A3_CHECKPOINT_ID", "")
+CHECKPOINT_GDRIVE_ID = os.environ.get("DA6401_A3_CHECKPOINT_ID", "https://drive.google.com/file/d/1Uo31AvMjCPdRpZq8M39akwfeqJXbcup7/view?usp=drive_link")
 DEFAULT_CHECKPOINT_PATH = os.environ.get("DA6401_A3_CHECKPOINT_PATH", "transformer_checkpoint.pt")
 
 
@@ -266,6 +266,7 @@ class Transformer(nn.Module):
 
     def __init__(
         self,
+<<<<<<< HEAD
         src_vocab_size=10000,
         tgt_vocab_size=10000,
         d_model=256,
@@ -280,6 +281,22 @@ class Transformer(nn.Module):
         max_decode_len=50,
         checkpoint_path=DEFAULT_CHECKPOINT_PATH,
         checkpoint_gdrive_id=CHECKPOINT_GDRIVE_ID,
+=======
+        src_vocab_size: int = 10000,
+        tgt_vocab_size: int = 10000,
+        d_model: int = 512,
+        N: int = 6,
+        num_heads: int = 8,
+        d_ff: int = 2048,
+        dropout: float = 0.1,
+        checkpoint_path: str = 'transformer_checkpoint.pt',
+        checkpoint_gdrive_id: str = "https://drive.google.com/file/d/1Uo31AvMjCPdRpZq8M39akwfeqJXbcup7/view?usp=drive_link",
+        max_len: int = 5000,
+        pad_idx: int = 1,
+        sos_idx: int = 2,
+        eos_idx: int = 3,
+        max_decode_len: int = 100,
+>>>>>>> ae621f8d7401fb01a32ef3902e3c8cf4cecb8e88
     ) -> None:
 
         super().__init__()
