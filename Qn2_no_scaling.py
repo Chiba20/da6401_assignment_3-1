@@ -1,7 +1,5 @@
 """
-Scaling factor ablation (with and without 1/sqrt(d_k)) for DA6401 Assignment 3.
-This script trains two Transformer variants, logs gradient norms for Q and K weights,
-and produces comparison plots for W&B.
+Training, decoding, BLEU evaluation, and checkpoints for Assignment 3.
 """
 
 from collections import Counter
@@ -9,14 +7,21 @@ import math
 import os
 from typing import Optional
 
-import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from dataset import Multi30kDataset, collate_batch
 from lr_scheduler import NoamScheduler
-from model import Transformer, make_src_mask, make_tgt_mask, MultiHeadAttention
+
+
+from model import (
+    Transformer,
+    make_src_mask,
+    make_tgt_mask,
+    MultiHeadAttention
+)
+
 
 try:
     import wandb
@@ -255,8 +260,40 @@ def load_checkpoint(
     return int(checkpoint.get("epoch", 0))
 
 
-def run_single_variant(config: dict, use_scaling: bool, run_name: str):
+def run_training_experiment() -> None:
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    config = {
+
+        "project": "da6401-a3",
+
+        "run_name": "no_scaling",
+
+        "batch_size": 64,
+
+        "num_epochs": 20,
+
+        "d_model": 256,
+
+        "N": 3,
+
+        "num_heads": 8,
+
+        "d_ff": 1024,
+
+        "dropout": 0.1,
+
+        "warmup_steps": 4000,
+
+        "lr": 1.0,
+
+        "min_freq": 2,
+
+        "checkpoint_path": "transformer_checkpoint.pt",
+
+        "use_wandb": True,
+    }
 
     use_wandb = (
         config["use_wandb"]
@@ -264,53 +301,124 @@ def run_single_variant(config: dict, use_scaling: bool, run_name: str):
         and os.environ.get("WANDB_MODE") != "disabled"
     )
 
+    # initialize wandb
     if use_wandb:
+
         wandb.init(
             project=config["project"],
-            name=run_name,
-            config=dict(config, use_attention_scaling=use_scaling),
+            name=config["run_name"],
+            config=config
         )
+
         wandb.define_metric("epoch")
-        wandb.define_metric("global_step", step_metric=True)
-        wandb.define_metric("train/*", step_metric="epoch")
-        wandb.define_metric("val/*", step_metric="epoch")
-        wandb.define_metric("grad_norm/*", step_metric="global_step")
-        wandb.define_metric("test/*")
 
-    train_ds = Multi30kDataset("train", min_freq=config["min_freq"])
-    val_ds = Multi30kDataset("validation", src_vocab=train_ds.src_vocab, tgt_vocab=train_ds.tgt_vocab)
-    test_ds = Multi30kDataset("test", src_vocab=train_ds.src_vocab, tgt_vocab=train_ds.tgt_vocab)
+        wandb.define_metric(
+            "train/*",
+            step_metric="epoch"
+        )
 
-    train_loader = DataLoader(train_ds, batch_size=config["batch_size"], shuffle=True, collate_fn=collate_batch)
-    val_loader = DataLoader(val_ds, batch_size=config["batch_size"], shuffle=False, collate_fn=collate_batch)
-    test_loader = DataLoader(test_ds, batch_size=config["batch_size"], shuffle=False, collate_fn=collate_batch)
+        wandb.define_metric(
+            "val/*",
+            step_metric="epoch"
+        )
 
+        wandb.define_metric(
+            "test/*"
+        )
+
+    # datasets
+    train_ds = Multi30kDataset(
+        "train",
+        min_freq=config["min_freq"]
+    )
+
+    val_ds = Multi30kDataset(
+        "validation",
+        src_vocab=train_ds.src_vocab,
+        tgt_vocab=train_ds.tgt_vocab
+    )
+
+    test_ds = Multi30kDataset(
+        "test",
+        src_vocab=train_ds.src_vocab,
+        tgt_vocab=train_ds.tgt_vocab
+    )
+
+    # dataloaders
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=config["batch_size"],
+        shuffle=True,
+        collate_fn=collate_batch
+    )
+
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=config["batch_size"],
+        shuffle=False,
+        collate_fn=collate_batch
+    )
+
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=config["batch_size"],
+        shuffle=False,
+        collate_fn=collate_batch
+    )
+
+    # model
     model = Transformer(
+
         src_vocab_size=len(train_ds.src_vocab),
+
         tgt_vocab_size=len(train_ds.tgt_vocab),
+
         d_model=config["d_model"],
+
         N=config["N"],
+
         num_heads=config["num_heads"],
+
         d_ff=config["d_ff"],
+
         dropout=config["dropout"],
+
         checkpoint_path=None,
-        use_attention_scaling=use_scaling,
+
     ).to(device)
 
     model.src_vocab = train_ds.src_vocab
     model.tgt_vocab = train_ds.tgt_vocab
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"], betas=(0.9, 0.98), eps=1e-9)
-    scheduler = NoamScheduler(optimizer, d_model=config["d_model"], warmup_steps=config["warmup_steps"])
-    loss_fn = LabelSmoothingLoss(len(train_ds.tgt_vocab), model.pad_idx, smoothing=0.1)
+    # optimizer
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=config["lr"],
+        betas=(0.9, 0.98),
+        eps=1e-9
+    )
 
-    grad_history = {"step": [], "q_mean": [], "k_mean": []}
-    val_bleu_history = []
-    global_step = 0
+    # noam scheduler
+    scheduler = NoamScheduler(
+        optimizer,
+        d_model=config["d_model"],
+        warmup_steps=config["warmup_steps"]
+    )
+
+    # label smoothing
+    loss_fn = LabelSmoothingLoss(
+        len(train_ds.tgt_vocab),
+        model.pad_idx,
+        smoothing=0.1
+    )
+
     best_val = float("inf")
 
+    # training loop
     for epoch in range(config["num_epochs"]):
-        train_loss, global_step = run_epoch(
+
+        # training
+        train_loss = run_epoch(
             train_loader,
             model,
             loss_fn,
@@ -318,14 +426,11 @@ def run_single_variant(config: dict, use_scaling: bool, run_name: str):
             scheduler,
             epoch,
             True,
-            device,
-            grad_history,
-            global_step,
-            max_grad_steps=1000,
-            use_wandb=use_wandb,
+            device
         )
 
-        val_loss, _ = run_epoch(
+        # validation loss
+        val_loss = run_epoch(
             val_loader,
             model,
             loss_fn,
@@ -333,118 +438,92 @@ def run_single_variant(config: dict, use_scaling: bool, run_name: str):
             None,
             epoch,
             False,
-            device,
+            device
         )
 
-        val_bleu = evaluate_bleu(model, val_loader, train_ds.tgt_vocab, device=device)
-        val_bleu_history.append(val_bleu)
+        # validation BLEU
+        val_bleu = evaluate_bleu(
+            model,
+            val_loader,
+            train_ds.tgt_vocab,
+            device=device
+        )
 
         print(
-            f"[{run_name}] epoch={epoch + 1} "
+            f"epoch={epoch + 1} "
             f"train_loss={train_loss:.4f} "
             f"val_loss={val_loss:.4f} "
             f"val_bleu={val_bleu:.2f}"
         )
 
+        # wandb logging
         if use_wandb:
+
             wandb.log({
+
                 "epoch": epoch + 1,
+
                 "train/loss": train_loss,
+
                 "val/loss": val_loss,
+
                 "val/bleu": val_bleu,
+
                 "train/lr": optimizer.param_groups[0]["lr"],
-            }, step=epoch + 1)
-
-        if val_loss < best_val:
-            best_val = val_loss
-            checkpoint_name = f"{run_name}_checkpoint.pt"
-            save_checkpoint(model, optimizer, scheduler, epoch, checkpoint_name)
-            print("best checkpoint saved")
-            if use_wandb:
-                artifact = wandb.Artifact(f"best-{run_name}-checkpoint", type="model")
-                artifact.add_file(checkpoint_name)
-                wandb.log_artifact(artifact)
-
-    test_bleu = evaluate_bleu(model, test_loader, train_ds.tgt_vocab, device=device)
-    print(f"[{run_name}] test_bleu={test_bleu:.2f}")
-
-    if use_wandb:
-        wandb.log({"test/bleu": test_bleu, "best/val_loss": best_val})
-        wandb.finish()
-
-    return {
-        "run_name": run_name,
-        "val_bleu": val_bleu_history,
-        "grad_history": grad_history,
-        "test_bleu": test_bleu,
-    }
-
-
-def plot_ablation_results(scaling_data: dict, no_scaling_data: dict, project_name: str):
-    import matplotlib.pyplot as plt
-
-    epochs = list(range(1, len(scaling_data["val_bleu"]) + 1))
-    plt.figure()
-    plt.plot(epochs, scaling_data["val_bleu"], marker="o", label="With scaling")
-    plt.plot(epochs, no_scaling_data["val_bleu"], marker="o", label="Without scaling")
-    plt.xlabel("Epoch")
-    plt.ylabel("Validation BLEU")
-    plt.title("Scaling Factor Ablation: Validation BLEU")
-    plt.legend()
-    plt.grid(True)
-    bleu_path = "scaling_ablation_bleu.png"
-    plt.savefig(bleu_path)
-    plt.close()
-
-    steps = scaling_data["grad_history"]["step"]
-    plt.figure(figsize=(10, 6))
-    plt.plot(steps, scaling_data["grad_history"]["q_mean"], marker=".", label="Q norm with scaling")
-    plt.plot(steps, no_scaling_data["grad_history"]["q_mean"], marker=".", label="Q norm without scaling")
-    plt.plot(steps, scaling_data["grad_history"]["k_mean"], marker=".", linestyle="--", label="K norm with scaling")
-    plt.plot(steps, no_scaling_data["grad_history"]["k_mean"], marker=".", linestyle="--", label="K norm without scaling")
-    plt.xlabel("Training Step")
-    plt.ylabel("Gradient Norm")
-    plt.title("Gradient Norms for Q and K Weight Matrices (First 1000 Steps)")
-    plt.legend()
-    plt.grid(True)
-    grad_path = "scaling_ablation_gradnorm.png"
-    plt.savefig(grad_path)
-    plt.close()
-
-    if wandb is not None:
-        try:
-            wandb.init(project=project_name, name="scaling_ablation_comparison")
-            wandb.log({
-                "ablation/bleu_comparison": wandb.Image(bleu_path),
-                "ablation/gradnorm_comparison": wandb.Image(grad_path),
             })
-            wandb.finish()
-        except Exception:
-            pass
 
-    print("Saved ablation comparison plots:", bleu_path, grad_path)
+        # save best model
+        if val_loss < best_val:
 
+            best_val = val_loss
 
-def run_training_experiment() -> None:
-    config = {
-        "project": "da6401-a3",
-        "batch_size": 64,
-        "num_epochs": 20,
-        "d_model": 256,
-        "N": 3,
-        "num_heads": 8,
-        "d_ff": 1024,
-        "dropout": 0.1,
-        "warmup_steps": 4000,
-        "lr": 1.0,
-        "min_freq": 2,
-        "use_wandb": True,
-    }
+            save_checkpoint(
+                model,
+                optimizer,
+                scheduler,
+                epoch,
+                config["checkpoint_path"]
+            )
 
-    scaling_data = run_single_variant(config, True, "scaling")
-    no_scaling_data = run_single_variant(config, False, "no_scaling")
-    plot_ablation_results(scaling_data, no_scaling_data, config["project"])
+            print("best checkpoint saved")
 
+            # upload checkpoint to wandb
+            if use_wandb:
+
+                artifact = wandb.Artifact(
+                    "best-transformer-checkpoint",
+                    type="model"
+                )
+
+                artifact.add_file(
+                    config["checkpoint_path"]
+                )
+
+                wandb.log_artifact(
+                    artifact
+                )
+
+    # final BLEU
+    bleu = evaluate_bleu(
+        model,
+        test_loader,
+        train_ds.tgt_vocab,
+        device=device
+    )
+
+    print(f"test_bleu={bleu:.2f}")
+
+    # final wandb logs
+    if use_wandb:
+
+        wandb.log({
+
+            "test/bleu": bleu,
+
+            "best/val_loss": best_val
+        })
+
+        wandb.finish()
 
 if __name__ == "__main__":
     run_training_experiment()
