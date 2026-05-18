@@ -473,4 +473,108 @@ def run_training_experiment() -> None:
         wandb.finish()
 
 if __name__ == "__main__":
-    run_training_experiment()
+    # By default keep the original behavior. To run the positional encoding
+    # comparison that trains both sinusoidal and learned positional models and
+    # logs an overlay BLEU curve, call this module directly. The comparison
+    # routine will also log the overlay plot to W&B.
+    def run_positional_comparison():
+        base_config = {
+            "project": "da6401-a3",
+            "batch_size": 64,
+            "num_epochs": 20,
+            "d_model": 256,
+            "N": 3,
+            "num_heads": 8,
+            "d_ff": 1024,
+            "dropout": 0.1,
+            "warmup_steps": 4000,
+            "lr": 1.0,
+            "min_freq": 2,
+            "checkpoint_path": "transformer_checkpoint_pt",
+            "use_wandb": True,
+        }
+
+        def train_once(use_learned_pos: bool, run_name: str):
+            # copy of core training loop but returns per-epoch val_bleu history
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+
+            config = dict(base_config)
+            config["use_wandb"] = True
+
+            # datasets
+            train_ds = Multi30kDataset("train", min_freq=config["min_freq"]) 
+            val_ds = Multi30kDataset("validation", src_vocab=train_ds.src_vocab, tgt_vocab=train_ds.tgt_vocab)
+
+            train_loader = DataLoader(train_ds, batch_size=config["batch_size"], shuffle=True, collate_fn=collate_batch)
+            val_loader = DataLoader(val_ds, batch_size=config["batch_size"], shuffle=False, collate_fn=collate_batch)
+
+            model = Transformer(
+                src_vocab_size=len(train_ds.src_vocab),
+                tgt_vocab_size=len(train_ds.tgt_vocab),
+                d_model=config["d_model"],
+                N=config["N"],
+                num_heads=config["num_heads"],
+                d_ff=config["d_ff"],
+                dropout=config["dropout"],
+                checkpoint_path=None,
+                use_learned_pos=use_learned_pos,
+            ).to(device)
+
+            model.src_vocab = train_ds.src_vocab
+            model.tgt_vocab = train_ds.tgt_vocab
+
+            optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"], betas=(0.9, 0.98), eps=1e-9)
+            scheduler = NoamScheduler(optimizer, d_model=config["d_model"], warmup_steps=config["warmup_steps"]) 
+            loss_fn = LabelSmoothingLoss(len(train_ds.tgt_vocab), model.pad_idx, smoothing=0.1)
+
+            use_wandb = config["use_wandb"] and wandb is not None and os.environ.get("WANDB_MODE") != "disabled"
+            if use_wandb:
+                wandb.init(project=base_config["project"], name=run_name, config=dict(config, use_learned_pos=use_learned_pos))
+
+            val_bleu_history = []
+            for epoch in range(base_config["num_epochs"]):
+                train_loss = run_epoch(train_loader, model, loss_fn, optimizer, scheduler, epoch, True, device)
+                val_loss = run_epoch(val_loader, model, loss_fn, None, None, epoch, False, device)
+                val_bleu = evaluate_bleu(model, val_loader, train_ds.tgt_vocab, device=device)
+                val_bleu_history.append(val_bleu)
+                if use_wandb:
+                    wandb.log({"epoch": epoch + 1, "val/bleu": val_bleu, "train/loss": train_loss, "val/loss": val_loss})
+
+            if use_wandb:
+                wandb.finish()
+
+            return val_bleu_history
+        # run comparison: sinusoidal vs learned (inside the function)
+        print("Running positional encoding vs learned embedding comparison...")
+        sinus_bleu = train_once(False, "positional_sinusoidal")
+        learned_bleu = train_once(True, "positional_learned")
+
+        # plot overlay
+        import matplotlib.pyplot as plt
+
+        epochs = list(range(1, len(sinus_bleu) + 1))
+        plt.figure()
+        plt.plot(epochs, sinus_bleu, label="Sinusoidal PE", marker="o")
+        plt.plot(epochs, learned_bleu, label="Learned Positional", marker="o")
+        plt.xlabel("Epoch")
+        plt.ylabel("Validation BLEU")
+        plt.title("Positional Encoding: Sinusoidal vs Learned (Validation BLEU)")
+        plt.legend()
+        plt.grid(True)
+        fname = "positional_comparison_bleu.png"
+        plt.savefig(fname)
+        plt.close()
+
+        # log overlay to W&B
+        if wandb is not None:
+            try:
+                wandb.init(project=base_config["project"], name="positional_comparison")
+                wandb.log({"positional/comparison_bleu": wandb.Image(fname)})
+                wandb.finish()
+            except Exception:
+                pass
+
+        print("Positional comparison complete. Saved:", fname)
+
+    # Execute comparison when running as script
+    run_positional_comparison()
