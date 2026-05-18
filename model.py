@@ -113,9 +113,12 @@ def scaled_dot_product_attention(
     K: torch.Tensor,
     V: torch.Tensor,
     mask: Optional[torch.Tensor] = None,
+    scale: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     d_k = Q.size(-1)
-    scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(d_k)
+    scores = torch.matmul(Q, K.transpose(-2, -1))
+    if scale:
+        scores = scores / math.sqrt(d_k)
     if mask is not None:
         scores = scores.masked_fill(mask, torch.finfo(scores.dtype).min)
     attn_w = F.softmax(scores, dim=-1)
@@ -138,12 +141,13 @@ def make_tgt_mask(tgt: torch.Tensor, pad_idx: int = 1) -> torch.Tensor:
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, d_model: int, num_heads: int, dropout: float = 0.1) -> None:
+    def __init__(self, d_model: int, num_heads: int, dropout: float = 0.1, use_scaling: bool = True) -> None:
         super().__init__()
         assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
         self.d_model = d_model
         self.num_heads = num_heads
         self.d_k = d_model // num_heads
+        self.use_scaling = use_scaling
         self.w_q = nn.Linear(d_model, d_model)
         self.w_k = nn.Linear(d_model, d_model)
         self.w_v = nn.Linear(d_model, d_model)
@@ -166,15 +170,10 @@ class MultiHeadAttention(nn.Module):
         v = self._split_heads(self.w_v(value))
 
         # scaled dot-product attention returns (output, weights)
-        attn_out, attn_weights = scaled_dot_product_attention(q, k, v, mask)
+        attn_out, attn_weights = scaled_dot_product_attention(q, k, v, mask, scale=self.use_scaling)
 
         # store attention weights on the module for hooks / visualization
-        # shape: [batch, heads, seq, seq]
-        try:
-            # attn_weights currently has shape [batch, heads, seq, seq]
-            self.attention_weights = attn_weights
-        except Exception:
-            self.attention_weights = None
+        self.attention_weights = attn_weights
 
         # compute attended values and apply dropout
         attn_out = torch.matmul(attn_weights, v)
@@ -213,9 +212,9 @@ class PositionwiseFeedForward(nn.Module):
 
 
 class EncoderLayer(nn.Module):
-    def __init__(self, d_model: int, num_heads: int, d_ff: int, dropout: float = 0.1) -> None:
+    def __init__(self, d_model: int, num_heads: int, d_ff: int, dropout: float = 0.1, use_scaling: bool = True) -> None:
         super().__init__()
-        self.self_attn = MultiHeadAttention(d_model, num_heads, dropout)
+        self.self_attn = MultiHeadAttention(d_model, num_heads, dropout, use_scaling=use_scaling)
         self.feed_forward = PositionwiseFeedForward(d_model, d_ff, dropout)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
@@ -228,10 +227,10 @@ class EncoderLayer(nn.Module):
 
 
 class DecoderLayer(nn.Module):
-    def __init__(self, d_model: int, num_heads: int, d_ff: int, dropout: float = 0.1) -> None:
+    def __init__(self, d_model: int, num_heads: int, d_ff: int, dropout: float = 0.1, use_scaling: bool = True) -> None:
         super().__init__()
-        self.self_attn = MultiHeadAttention(d_model, num_heads, dropout)
-        self.cross_attn = MultiHeadAttention(d_model, num_heads, dropout)
+        self.self_attn = MultiHeadAttention(d_model, num_heads, dropout, use_scaling=use_scaling)
+        self.cross_attn = MultiHeadAttention(d_model, num_heads, dropout, use_scaling=use_scaling)
         self.feed_forward = PositionwiseFeedForward(d_model, d_ff, dropout)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
@@ -297,6 +296,7 @@ class Transformer(nn.Module):
         checkpoint_gdrive_id: str = "1Uo31AvMjCPdRpZq8M39akwfeqJXbcup7",
         max_len: int = 5000,
         use_learned_pos: bool = False,
+        use_attention_scaling: bool = True,
         pad_idx: int = 1,
         sos_idx: int = 2,
         eos_idx: int = 3,
@@ -346,6 +346,7 @@ class Transformer(nn.Module):
         self.d_ff = d_ff
         self.dropout_p = dropout
         self.max_len = max_len
+        self.use_attention_scaling = use_attention_scaling
 
         self.use_learned_pos = use_learned_pos
 
@@ -384,7 +385,8 @@ class Transformer(nn.Module):
                 d_model,
                 num_heads,
                 d_ff,
-                dropout
+                dropout,
+                use_scaling=use_attention_scaling,
             ),
             N
         )
@@ -395,7 +397,8 @@ class Transformer(nn.Module):
                 d_model,
                 num_heads,
                 d_ff,
-                dropout
+                dropout,
+                use_scaling=use_attention_scaling,
             ),
             N
         )
