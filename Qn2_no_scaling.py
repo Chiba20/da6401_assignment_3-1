@@ -326,6 +326,15 @@ def run_training_experiment() -> None:
             "test/*"
         )
 
+        wandb.define_metric(
+            "global_step"
+        )
+
+        wandb.define_metric(
+            "grad_norm/*",
+            step_metric="global_step"
+        )
+
     # datasets
     train_ds = Multi30kDataset(
         "train",
@@ -413,12 +422,18 @@ def run_training_experiment() -> None:
     )
 
     best_val = float("inf")
+    grad_history = {
+        "step": [],
+        "q_mean": [],
+        "k_mean": [],
+    }
+    global_step = 0
 
     # training loop
     for epoch in range(config["num_epochs"]):
 
         # training
-        train_loss = run_epoch(
+        train_loss, global_step = run_epoch(
             train_loader,
             model,
             loss_fn,
@@ -426,11 +441,15 @@ def run_training_experiment() -> None:
             scheduler,
             epoch,
             True,
-            device
+            device,
+            grad_history=grad_history,
+            global_step_start=global_step,
+            max_grad_steps=1000,
+            use_wandb=use_wandb,
         )
 
         # validation loss
-        val_loss = run_epoch(
+        val_loss, _ = run_epoch(
             val_loader,
             model,
             loss_fn,
@@ -438,7 +457,10 @@ def run_training_experiment() -> None:
             None,
             epoch,
             False,
-            device
+            device,
+            grad_history=None,
+            global_step_start=global_step,
+            use_wandb=False,
         )
 
         # validation BLEU
