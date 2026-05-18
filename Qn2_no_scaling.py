@@ -1,5 +1,6 @@
 """
-Training, decoding, BLEU evaluation, and checkpoints for Assignment 3.
+Qn2.2: Ablation Study - Scaling Factor (No Scaling Version)
+Training script for transformer WITHOUT 1/√dk scaling to study vanishing gradients
 """
 
 from collections import Counter
@@ -13,14 +14,7 @@ from torch.utils.data import DataLoader
 
 from dataset import Multi30kDataset, collate_batch
 from lr_scheduler import NoamScheduler
-
-
-from model import (
-    Transformer,
-    make_src_mask,
-    make_tgt_mask,
-    MultiHeadAttention
-)
+from model import Transformer, make_src_mask, make_tgt_mask, MultiHeadAttention
 
 
 try:
@@ -38,13 +32,19 @@ def get_attention_modules(model: Transformer):
 
 
 def compute_query_key_grad_norms(model: Transformer):
+    """Compute L2 norms of Query and Key weight gradients"""
     q_norms = []
     k_norms = []
     for module in get_attention_modules(model):
-        q_grad = module.w_q.weight.grad
-        k_grad = module.w_k.weight.grad
-        q_norms.append(float(q_grad.norm(2).item()) if q_grad is not None else 0.0)
-        k_norms.append(float(k_grad.norm(2).item()) if k_grad is not None else 0.0)
+        if module.w_q.weight.grad is not None:
+            q_norms.append(float(module.w_q.weight.grad.norm(2).item()))
+        else:
+            q_norms.append(0.0)
+        
+        if module.w_k.weight.grad is not None:
+            k_norms.append(float(module.w_k.weight.grad.norm(2).item()))
+        else:
+            k_norms.append(0.0)
     return q_norms, k_norms
 
 
@@ -106,24 +106,27 @@ def run_epoch(
 
             global_step += 1
 
+            # Log gradient norms during first 1000 steps
             if grad_history is not None and global_step <= max_grad_steps:
                 q_norms, k_norms = compute_query_key_grad_norms(model)
                 q_mean = sum(q_norms) / max(len(q_norms), 1)
                 k_mean = sum(k_norms) / max(len(k_norms), 1)
+                
                 grad_history["step"].append(global_step)
                 grad_history["q_mean"].append(q_mean)
                 grad_history["k_mean"].append(k_mean)
-                if use_wandb:
+                
+                if use_wandb and wandb is not None:
                     log_data = {
-                        "global_step": global_step,
-                        "grad_norm/Q/mean": q_mean,
-                        "grad_norm/K/mean": k_mean,
+                        "step": global_step,
+                        "train/grad_norm_Q_mean": q_mean,
+                        "train/grad_norm_K_mean": k_mean,
                     }
-                    for layer_index, norm in enumerate(q_norms, start=1):
-                        log_data[f"grad_norm/Q/layer_{layer_index}"] = norm
-                    for layer_index, norm in enumerate(k_norms, start=1):
-                        log_data[f"grad_norm/K/layer_{layer_index}"] = norm
-                    wandb.log(log_data, step=global_step)
+                    for layer_idx, q_norm in enumerate(q_norms, start=1):
+                        log_data[f"train/grad_norm_Q_layer_{layer_idx}"] = q_norm
+                    for layer_idx, k_norm in enumerate(k_norms, start=1):
+                        log_data[f"train/grad_norm_K_layer_{layer_idx}"] = k_norm
+                    wandb.log(log_data)
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
@@ -261,38 +264,27 @@ def load_checkpoint(
 
 
 def run_training_experiment() -> None:
-
+    """Main training loop WITHOUT scaling factor (1/√dk)"""
+    
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Using device: {device}")
 
     config = {
-
         "project": "da6401-a3",
-
-        "run_name": "no_scaling",
-
+        "run_name": "qn2_no_scaling",
         "batch_size": 64,
-
         "num_epochs": 20,
-
         "d_model": 256,
-
         "N": 3,
-
         "num_heads": 8,
-
         "d_ff": 1024,
-
         "dropout": 0.1,
-
         "warmup_steps": 4000,
-
         "lr": 1.0,
-
         "min_freq": 2,
-
-        "checkpoint_path": "transformer_checkpoint.pt",
-
+        "checkpoint_path": "checkpoint_no_scaling.pt",
         "use_wandb": True,
+        "use_scaling": False,  # KEY: disable 1/√dk scaling
     }
 
     use_wandb = (
@@ -301,127 +293,86 @@ def run_training_experiment() -> None:
         and os.environ.get("WANDB_MODE") != "disabled"
     )
 
-    # initialize wandb
+    # Initialize W&B
     if use_wandb:
-
         wandb.init(
             project=config["project"],
             name=config["run_name"],
-            config=config
+            config=config,
         )
+        wandb.define_metric("step")
+        wandb.define_metric("train/loss", step_metric="epoch")
+        wandb.define_metric("val/loss", step_metric="epoch")
+        wandb.define_metric("val/bleu", step_metric="epoch")
+        wandb.define_metric("train/grad_norm_Q_mean", step_metric="step")
+        wandb.define_metric("train/grad_norm_K_mean", step_metric="step")
 
-        wandb.define_metric("epoch")
+    # Load datasets
+    train_ds = Multi30kDataset("train", min_freq=config["min_freq"])
+    val_ds = Multi30kDataset("validation", src_vocab=train_ds.src_vocab, tgt_vocab=train_ds.tgt_vocab)
+    test_ds = Multi30kDataset("test", src_vocab=train_ds.src_vocab, tgt_vocab=train_ds.tgt_vocab)
 
-        wandb.define_metric(
-            "train/*",
-            step_metric="epoch"
-        )
-
-        wandb.define_metric(
-            "val/*",
-            step_metric="epoch"
-        )
-
-        wandb.define_metric(
-            "test/*"
-        )
-
-        wandb.define_metric(
-            "global_step"
-        )
-
-        wandb.define_metric(
-            "grad_norm/*",
-            step_metric="global_step"
-        )
-
-    # datasets
-    train_ds = Multi30kDataset(
-        "train",
-        min_freq=config["min_freq"]
-    )
-
-    val_ds = Multi30kDataset(
-        "validation",
-        src_vocab=train_ds.src_vocab,
-        tgt_vocab=train_ds.tgt_vocab
-    )
-
-    test_ds = Multi30kDataset(
-        "test",
-        src_vocab=train_ds.src_vocab,
-        tgt_vocab=train_ds.tgt_vocab
-    )
-
-    # dataloaders
+    # Create dataloaders
     train_loader = DataLoader(
         train_ds,
         batch_size=config["batch_size"],
         shuffle=True,
-        collate_fn=collate_batch
+        collate_fn=collate_batch,
     )
-
     val_loader = DataLoader(
         val_ds,
         batch_size=config["batch_size"],
         shuffle=False,
-        collate_fn=collate_batch
+        collate_fn=collate_batch,
     )
-
     test_loader = DataLoader(
         test_ds,
         batch_size=config["batch_size"],
         shuffle=False,
-        collate_fn=collate_batch
+        collate_fn=collate_batch,
     )
 
-    # model
+    # Create model WITHOUT scaling (use_attention_scaling=False)
     model = Transformer(
-
         src_vocab_size=len(train_ds.src_vocab),
-
         tgt_vocab_size=len(train_ds.tgt_vocab),
-
         d_model=config["d_model"],
-
         N=config["N"],
-
         num_heads=config["num_heads"],
-
         d_ff=config["d_ff"],
-
         dropout=config["dropout"],
-
+        use_attention_scaling=False,  # KEY: No 1/√dk scaling
         checkpoint_path=None,
-
     ).to(device)
 
     model.src_vocab = train_ds.src_vocab
     model.tgt_vocab = train_ds.tgt_vocab
 
-    # optimizer
+    # Optimizer
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=config["lr"],
         betas=(0.9, 0.98),
-        eps=1e-9
+        eps=1e-9,
     )
 
-    # noam scheduler
+    # Learning rate scheduler (Noam)
     scheduler = NoamScheduler(
         optimizer,
         d_model=config["d_model"],
-        warmup_steps=config["warmup_steps"]
+        warmup_steps=config["warmup_steps"],
     )
 
-    # label smoothing
+    # Loss function
     loss_fn = LabelSmoothingLoss(
         len(train_ds.tgt_vocab),
         model.pad_idx,
-        smoothing=0.1
+        smoothing=0.1,
     )
 
     best_val = float("inf")
+    
+    # Gradient history for first 1000 steps
     grad_history = {
         "step": [],
         "q_mean": [],
@@ -429,10 +380,11 @@ def run_training_experiment() -> None:
     }
     global_step = 0
 
-    # training loop
+    # Training loop
     for epoch in range(config["num_epochs"]):
-
-        # training
+        print(f"\n--- Epoch {epoch + 1}/{config['num_epochs']} ---")
+        
+        # Training
         train_loss, global_step = run_epoch(
             train_loader,
             model,
@@ -440,112 +392,77 @@ def run_training_experiment() -> None:
             optimizer,
             scheduler,
             epoch,
-            True,
-            device,
+            is_train=True,
+            device=device,
             grad_history=grad_history,
             global_step_start=global_step,
             max_grad_steps=1000,
             use_wandb=use_wandb,
         )
 
-        # validation loss
+        # Validation
         val_loss, _ = run_epoch(
             val_loader,
             model,
             loss_fn,
-            None,
-            None,
-            epoch,
-            False,
-            device,
+            optimizer=None,
+            scheduler=None,
+            epoch_num=epoch,
+            is_train=False,
+            device=device,
             grad_history=None,
             global_step_start=global_step,
             use_wandb=False,
         )
 
-        # validation BLEU
-        val_bleu = evaluate_bleu(
-            model,
-            val_loader,
-            train_ds.tgt_vocab,
-            device=device
-        )
+        # BLEU evaluation
+        val_bleu = evaluate_bleu(model, val_loader, train_ds.tgt_vocab, device=device)
 
-        print(
-            f"epoch={epoch + 1} "
-            f"train_loss={train_loss:.4f} "
-            f"val_loss={val_loss:.4f} "
-            f"val_bleu={val_bleu:.2f}"
-        )
+        print(f"train_loss={train_loss:.4f} val_loss={val_loss:.4f} val_bleu={val_bleu:.2f}")
 
-        # wandb logging
+        # Log to W&B
         if use_wandb:
-
             wandb.log({
-
                 "epoch": epoch + 1,
-
                 "train/loss": train_loss,
-
                 "val/loss": val_loss,
-
                 "val/bleu": val_bleu,
-
                 "train/lr": optimizer.param_groups[0]["lr"],
             })
 
-        # save best model
+        # Save best model
         if val_loss < best_val:
-
             best_val = val_loss
-
             save_checkpoint(
                 model,
                 optimizer,
                 scheduler,
                 epoch,
-                config["checkpoint_path"]
+                config["checkpoint_path"],
             )
-
-            print("best checkpoint saved")
-
-            # upload checkpoint to wandb
+            print("✓ Best checkpoint saved")
+            
             if use_wandb:
+                artifact = wandb.Artifact("best-no-scaling-checkpoint", type="model")
+                artifact.add_file(config["checkpoint_path"])
+                wandb.log_artifact(artifact)
 
-                artifact = wandb.Artifact(
-                    "best-transformer-checkpoint",
-                    type="model"
-                )
+    # Final test evaluation
+    test_bleu = evaluate_bleu(model, test_loader, train_ds.tgt_vocab, device=device)
+    print(f"\n✓ Final test BLEU: {test_bleu:.2f}")
 
-                artifact.add_file(
-                    config["checkpoint_path"]
-                )
-
-                wandb.log_artifact(
-                    artifact
-                )
-
-    # final BLEU
-    bleu = evaluate_bleu(
-        model,
-        test_loader,
-        train_ds.tgt_vocab,
-        device=device
-    )
-
-    print(f"test_bleu={bleu:.2f}")
-
-    # final wandb logs
     if use_wandb:
-
         wandb.log({
-
-            "test/bleu": bleu,
-
-            "best/val_loss": best_val
+            "test/bleu": test_bleu,
+            "best/val_loss": best_val,
         })
-
         wandb.finish()
+
+    # Print gradient norm summary
+    if grad_history["step"]:
+        print(f"\nGradient Norm Summary (First 1000 steps):")
+        print(f"Q mean norms: min={min(grad_history['q_mean']):.6f}, max={max(grad_history['q_mean']):.6f}")
+        print(f"K mean norms: min={min(grad_history['k_mean']):.6f}, max={max(grad_history['k_mean']):.6f}")
 
 if __name__ == "__main__":
     run_training_experiment()
