@@ -1,7 +1,7 @@
 # DA6401 - Assignment 3: Implementing the Transformer for Machine Translation
 
 
-- 📊 [W&B Project Dashboard](https://wandb.ai/ge26z812-iitm-india/da6401-a3)
+- 📊 [W&B Project Dashboard]https://wandb.ai/ge26z812-iitm-india/da6401-a3/reports/Assignment3--VmlldzoxNjkxMDY5OA?accessToken=4f66aa8h215uyrjz6t9hknnqhaihrcmok27xmkse8mw3y5i7ahcg1bja8g7eba9y
 - 🐙 [GitHub Repository](https://github.com/yourusername/da6401-assignment-3)
 
 ## Overview
