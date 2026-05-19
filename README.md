@@ -382,8 +382,8 @@ print(english_translation)  # Expected: "a man plays a guitar"
 ## References
 
 - "Attention Is All You Need" - Vaswani et al. (2017)
-- Original Paper: https://arxiv.org/abs/1706.03762
-- Multi30k Dataset: https://github.com/multi30k/dataset
+- Original Paper: [https://arxiv.org/abs/1706.03762](https://proceedings.neurips.cc/paper_files/paper/2017/file/3f5ee243547dee91fbd053c1c4a845aa-Paper.pdf)
+- Multi30k Dataset:https://huggingface.co/datasets/bentrevett/multi30k
 
 ## Author Notes
 
