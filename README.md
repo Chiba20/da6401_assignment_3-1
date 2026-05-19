@@ -327,7 +327,7 @@ wandb login
 wandb online  # Sync offline runs
 ```
 
-Access project at: https://wandb.ai/[username]/da6401-a3
+Access project at:  https://wandb.ai/ge26z812-iitm-india/da6401-a3/reports/Assignment3--VmlldzoxNjkxMDY5OA?accessToken=4f66aa8h215uyrjz6t9hknnqhaihrcmok27xmkse8mw3y5i7ahcg1bja8g7eba9y
 
 ## Analysis & Comparison
 
